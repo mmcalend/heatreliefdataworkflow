@@ -85,7 +85,9 @@ def build_mappings(metadata):
         'site_types': parse_choices(metadata, 'site_type'),
         'review_status': parse_choices(metadata, 'review_status'),
         'services_offered': get_checkbox_fields(metadata, 'services_offered'),
-        'dow': get_checkbox_fields(metadata, 'dow')
+        'services_offered_update': get_checkbox_fields(metadata, 'services_offered_update'),
+        'dow': get_checkbox_fields(metadata, 'dow'),
+        'dow_update': get_checkbox_fields(metadata, 'dow_update')
     }
     
     print(f"  ✓ Built mappings for {len(mappings)} field types")
@@ -240,102 +242,123 @@ def clean_data(preseason_df, mappings):
             opening_times.append(opening)
             closing_times.append(closing)
             
-            if open_days and opening and closing:
-                opening_12hr = convert_to_12hr(opening)
-                closing_12hr = convert_to_12hr(closing)
-                full_schedules.append(f"{', '.join(open_days)}: {opening_12hr} - {closing_12hr}")
+            opening_12 = convert_to_12hr(opening)
+            closing_12 = convert_to_12hr(closing)
+            
+            if opening_12 and closing_12:
+                schedule = f"{', '.join(open_days)}: {opening_12} - {closing_12}"
+                full_schedules.append(schedule)
+                
+                hours_str = f"{opening} - {closing}"
+                for day in open_days:
+                    if day == 'Monday':
+                        monday_hours.append(hours_str)
+                    elif day == 'Tuesday':
+                        tuesday_hours.append(hours_str)
+                    elif day == 'Wednesday':
+                        wednesday_hours.append(hours_str)
+                    elif day == 'Thursday':
+                        thursday_hours.append(hours_str)
+                    elif day == 'Friday':
+                        friday_hours.append(hours_str)
+                    elif day == 'Saturday':
+                        saturday_hours.append(hours_str)
+                    elif day == 'Sunday':
+                        sunday_hours.append(hours_str)
+                
+                for day in day_names:
+                    if day not in open_days:
+                        if day == 'Monday':
+                            monday_hours.append('')
+                        elif day == 'Tuesday':
+                            tuesday_hours.append('')
+                        elif day == 'Wednesday':
+                            wednesday_hours.append('')
+                        elif day == 'Thursday':
+                            thursday_hours.append('')
+                        elif day == 'Friday':
+                            friday_hours.append('')
+                        elif day == 'Saturday':
+                            saturday_hours.append('')
+                        elif day == 'Sunday':
+                            sunday_hours.append('')
             else:
                 full_schedules.append('')
-            
-            # Populate individual day columns ONLY for open days
-            hours_string = f"{opening} - {closing}" if opening and closing else ""
-            monday_hours.append(hours_string if 'Monday' in open_days else "")
-            tuesday_hours.append(hours_string if 'Tuesday' in open_days else "")
-            wednesday_hours.append(hours_string if 'Wednesday' in open_days else "")
-            thursday_hours.append(hours_string if 'Thursday' in open_days else "")
-            friday_hours.append(hours_string if 'Friday' in open_days else "")
-            saturday_hours.append(hours_string if 'Saturday' in open_days else "")
-            sunday_hours.append(hours_string if 'Sunday' in open_days else "")
+                opening_times.append('')
+                closing_times.append('')
+                monday_hours.append('')
+                tuesday_hours.append('')
+                wednesday_hours.append('')
+                thursday_hours.append('')
+                friday_hours.append('')
+                saturday_hours.append('')
+                sunday_hours.append('')
         else:
             # Different hours per day
             opening_times.append('')
             closing_times.append('')
             
-            schedule_parts = []
+            day_schedule_parts = []
+            mon_open = str(row.get('mon_start', '')).strip()
+            mon_close = str(row.get('mon_close', '')).strip()
+            tues_open = str(row.get('tues_start', '')).strip()
+            tues_close = str(row.get('tues_close', '')).strip()
+            wed_open = str(row.get('wed_start', '')).strip()
+            wed_close = str(row.get('wed_close', '')).strip()
+            thurs_open = str(row.get('thurs_start', '')).strip()
+            thurs_close = str(row.get('thurs_close', '')).strip()
+            fri_open = str(row.get('fri_start', '')).strip()
+            fri_close = str(row.get('fri_close', '')).strip()
+            sat_open = str(row.get('sat_start', '')).strip()
+            sat_close = str(row.get('sat_close', '')).strip()
+            sun_open = str(row.get('sun_start', '')).strip()
+            sun_close = str(row.get('sun_close', '')).strip()
             
-            # Monday
-            mon_open = row.get('mon_start')
-            mon_close = row.get('mon_close')
-            if pd.notna(mon_open) and pd.notna(mon_close):
-                mon_hrs = f"{mon_open} - {mon_close}"
-                monday_hours.append(mon_hrs)
-                schedule_parts.append(f"Monday: {convert_to_12hr(mon_open)} - {convert_to_12hr(mon_close)}")
+            if 'Monday' in open_days and mon_open and mon_close:
+                day_schedule_parts.append(f"Monday: {convert_to_12hr(mon_open)} - {convert_to_12hr(mon_close)}")
+                monday_hours.append(f"{mon_open} - {mon_close}")
             else:
-                monday_hours.append("")
+                monday_hours.append('')
             
-            # Tuesday
-            tue_open = row.get('tues_start')
-            tue_close = row.get('tues_close')
-            if pd.notna(tue_open) and pd.notna(tue_close):
-                tue_hrs = f"{tue_open} - {tue_close}"
-                tuesday_hours.append(tue_hrs)
-                schedule_parts.append(f"Tuesday: {convert_to_12hr(tue_open)} - {convert_to_12hr(tue_close)}")
+            if 'Tuesday' in open_days and tues_open and tues_close:
+                day_schedule_parts.append(f"Tuesday: {convert_to_12hr(tues_open)} - {convert_to_12hr(tues_close)}")
+                tuesday_hours.append(f"{tues_open} - {tues_close}")
             else:
-                tuesday_hours.append("")
+                tuesday_hours.append('')
             
-            # Wednesday
-            wed_open = row.get('wed_start')
-            wed_close = row.get('wed_close')
-            if pd.notna(wed_open) and pd.notna(wed_close):
-                wed_hrs = f"{wed_open} - {wed_close}"
-                wednesday_hours.append(wed_hrs)
-                schedule_parts.append(f"Wednesday: {convert_to_12hr(wed_open)} - {convert_to_12hr(wed_close)}")
+            if 'Wednesday' in open_days and wed_open and wed_close:
+                day_schedule_parts.append(f"Wednesday: {convert_to_12hr(wed_open)} - {convert_to_12hr(wed_close)}")
+                wednesday_hours.append(f"{wed_open} - {wed_close}")
             else:
-                wednesday_hours.append("")
+                wednesday_hours.append('')
             
-            # Thursday
-            thu_open = row.get('thurs_start')
-            thu_close = row.get('thurs_close')
-            if pd.notna(thu_open) and pd.notna(thu_close):
-                thu_hrs = f"{thu_open} - {thu_close}"
-                thursday_hours.append(thu_hrs)
-                schedule_parts.append(f"Thursday: {convert_to_12hr(thu_open)} - {convert_to_12hr(thu_close)}")
+            if 'Thursday' in open_days and thurs_open and thurs_close:
+                day_schedule_parts.append(f"Thursday: {convert_to_12hr(thurs_open)} - {convert_to_12hr(thurs_close)}")
+                thursday_hours.append(f"{thurs_open} - {thurs_close}")
             else:
-                thursday_hours.append("")
+                thursday_hours.append('')
             
-            # Friday
-            fri_open = row.get('fri_start')
-            fri_close = row.get('fri_close')
-            if pd.notna(fri_open) and pd.notna(fri_close):
-                fri_hrs = f"{fri_open} - {fri_close}"
-                friday_hours.append(fri_hrs)
-                schedule_parts.append(f"Friday: {convert_to_12hr(fri_open)} - {convert_to_12hr(fri_close)}")
+            if 'Friday' in open_days and fri_open and fri_close:
+                day_schedule_parts.append(f"Friday: {convert_to_12hr(fri_open)} - {convert_to_12hr(fri_close)}")
+                friday_hours.append(f"{fri_open} - {fri_close}")
             else:
-                friday_hours.append("")
+                friday_hours.append('')
             
-            # Saturday
-            sat_open = row.get('sat_start')
-            sat_close = row.get('sat_close')
-            if pd.notna(sat_open) and pd.notna(sat_close):
-                sat_hrs = f"{sat_open} - {sat_close}"
-                saturday_hours.append(sat_hrs)
-                schedule_parts.append(f"Saturday: {convert_to_12hr(sat_open)} - {convert_to_12hr(sat_close)}")
+            if 'Saturday' in open_days and sat_open and sat_close:
+                day_schedule_parts.append(f"Saturday: {convert_to_12hr(sat_open)} - {convert_to_12hr(sat_close)}")
+                saturday_hours.append(f"{sat_open} - {sat_close}")
             else:
-                saturday_hours.append("")
+                saturday_hours.append('')
             
-            # Sunday
-            sun_open = row.get('sun_start')
-            sun_close = row.get('sun_close')
-            if pd.notna(sun_open) and pd.notna(sun_close):
-                sun_hrs = f"{sun_open} - {sun_close}"
-                sunday_hours.append(sun_hrs)
-                schedule_parts.append(f"Sunday: {convert_to_12hr(sun_open)} - {convert_to_12hr(sun_close)}")
+            if 'Sunday' in open_days and sun_open and sun_close:
+                day_schedule_parts.append(f"Sunday: {convert_to_12hr(sun_open)} - {convert_to_12hr(sun_close)}")
+                sunday_hours.append(f"{sun_open} - {sun_close}")
             else:
-                sunday_hours.append("")
+                sunday_hours.append('')
             
-            full_schedules.append('; '.join(schedule_parts))
+            full_schedules.append('; '.join(day_schedule_parts))
     
-    clean['same_hours_everyday'] = preseason_df['same_hours_everyday'].fillna(False).astype(bool)
+    clean['same_hours_everyday'] = preseason_df['same_hours_everyday']
     clean['opening_time'] = opening_times
     clean['closing_time'] = closing_times
     clean['full_schedule'] = full_schedules
@@ -348,7 +371,7 @@ def clean_data(preseason_df, mappings):
     clean['saturday_hours'] = saturday_hours
     clean['sunday_hours'] = sunday_hours
     
-    # Services - use metadata to get field names dynamically
+    # Services
     service_lists = []
     for idx, row in preseason_df.iterrows():
         site_services = []
@@ -388,7 +411,7 @@ def clean_data(preseason_df, mappings):
             all_closures.append(holidays['memorial_day'])
         if row.get('juneteenth') == 2:
             all_closures.append(holidays['juneteenth'])
-        if row.get('july_4') == 2:
+        if row.get('independence_day') == 2 or row.get('july_4') == 2:
             all_closures.append(holidays['independence_day'])
         if row.get('labor_day') == 2:
             all_closures.append(holidays['labor_day'])
@@ -399,12 +422,6 @@ def clean_data(preseason_df, mappings):
     
     # Status - use metadata mapping
     clean['review_status'] = preseason_df['review_status'].fillna(1).astype(int).map(mappings['review_status'])
-    
-    print(f"  → Status mapping from metadata: {mappings['review_status']}")
-    for idx, row in clean.iterrows():
-        original = preseason_df.loc[idx, 'review_status']
-        mapped = row['review_status']
-        print(f"     Site {row['record_id']}: {original} → {mapped}")
     
     # Metadata
     clean['last_updated'] = datetime.now().isoformat()
@@ -490,8 +507,8 @@ def geocode_addresses(df):
 
 
 # ==================== STEP 5: APPLY UPDATES ====================
-def apply_updates(clean_df, updates_df):
-    """Apply in-season updates"""
+def apply_updates(clean_df, updates_df, mappings):
+    """Apply in-season updates - replacing preseason data completely"""
     
     if updates_df.empty:
         print("→ No updates to apply")
@@ -499,6 +516,7 @@ def apply_updates(clean_df, updates_df):
     
     print(f"→ Applying {len(updates_df)} updates...")
     
+    # Get latest update per record
     if 'update_date' in updates_df.columns:
         updates_df['update_date'] = pd.to_datetime(updates_df['update_date'])
     else:
@@ -507,27 +525,173 @@ def apply_updates(clean_df, updates_df):
     latest_updates = updates_df.sort_values('update_date').groupby('record_id').last()
     
     update_count = 0
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    
     for record_id, update in latest_updates.iterrows():
         mask = clean_df['record_id'] == record_id
         if not mask.any():
             continue
         
         idx = clean_df[mask].index[0]
+        site_updated = False
         
-        if pd.notna(update.get('temp_standard_open')):
-            clean_df.at[idx, 'opening_time'] = update['temp_standard_open']
-            clean_df.at[idx, 'closing_time'] = update.get('temp_standard_close', '')
+        # Update hours if provided
+        same_hours_update = update.get('same_hours_everyday_update')
+        if pd.notna(same_hours_update):
+            clean_df.at[idx, 'same_hours_everyday'] = same_hours_update
+            
+            # Get open days from update
+            open_days = []
+            for i, day in enumerate(day_names, start=1):
+                checkbox_value = update.get(f'dow_update___{i}')
+                if checkbox_value == 1 or checkbox_value == '1':
+                    open_days.append(day)
+            
+            clean_df.at[idx, 'days_open'] = ', '.join(open_days)
+            
+            if same_hours_update:
+                # Same hours every day
+                opening = str(update.get('standard_start_time_update', '')).strip()
+                closing = str(update.get('standard_close_time_update', '')).strip()
+                
+                clean_df.at[idx, 'opening_time'] = opening
+                clean_df.at[idx, 'closing_time'] = closing
+                
+                opening_12 = convert_to_12hr(opening)
+                closing_12 = convert_to_12hr(closing)
+                
+                if opening_12 and closing_12:
+                    schedule = f"{', '.join(open_days)}: {opening_12} - {closing_12}"
+                    clean_df.at[idx, 'full_schedule'] = schedule
+                    
+                    hours_str = f"{opening} - {closing}"
+                    clean_df.at[idx, 'monday_hours'] = hours_str if 'Monday' in open_days else ''
+                    clean_df.at[idx, 'tuesday_hours'] = hours_str if 'Tuesday' in open_days else ''
+                    clean_df.at[idx, 'wednesday_hours'] = hours_str if 'Wednesday' in open_days else ''
+                    clean_df.at[idx, 'thursday_hours'] = hours_str if 'Thursday' in open_days else ''
+                    clean_df.at[idx, 'friday_hours'] = hours_str if 'Friday' in open_days else ''
+                    clean_df.at[idx, 'saturday_hours'] = hours_str if 'Saturday' in open_days else ''
+                    clean_df.at[idx, 'sunday_hours'] = hours_str if 'Sunday' in open_days else ''
+                    site_updated = True
+            else:
+                # Different hours per day
+                clean_df.at[idx, 'opening_time'] = ''
+                clean_df.at[idx, 'closing_time'] = ''
+                
+                day_schedule_parts = []
+                
+                mon_open = str(update.get('mon_start_update', '')).strip()
+                mon_close = str(update.get('mon_close_update', '')).strip()
+                if 'Monday' in open_days and mon_open and mon_close:
+                    day_schedule_parts.append(f"Monday: {convert_to_12hr(mon_open)} - {convert_to_12hr(mon_close)}")
+                    clean_df.at[idx, 'monday_hours'] = f"{mon_open} - {mon_close}"
+                else:
+                    clean_df.at[idx, 'monday_hours'] = ''
+                
+                tues_open = str(update.get('tues_start_update', '')).strip()
+                tues_close = str(update.get('tues_close_update', '')).strip()
+                if 'Tuesday' in open_days and tues_open and tues_close:
+                    day_schedule_parts.append(f"Tuesday: {convert_to_12hr(tues_open)} - {convert_to_12hr(tues_close)}")
+                    clean_df.at[idx, 'tuesday_hours'] = f"{tues_open} - {tues_close}"
+                else:
+                    clean_df.at[idx, 'tuesday_hours'] = ''
+                
+                wed_open = str(update.get('wed_start_update', '')).strip()
+                wed_close = str(update.get('wed_close_update', '')).strip()
+                if 'Wednesday' in open_days and wed_open and wed_close:
+                    day_schedule_parts.append(f"Wednesday: {convert_to_12hr(wed_open)} - {convert_to_12hr(wed_close)}")
+                    clean_df.at[idx, 'wednesday_hours'] = f"{wed_open} - {wed_close}"
+                else:
+                    clean_df.at[idx, 'wednesday_hours'] = ''
+                
+                thurs_open = str(update.get('thurs_start_update', '')).strip()
+                thurs_close = str(update.get('thurs_close_update', '')).strip()
+                if 'Thursday' in open_days and thurs_open and thurs_close:
+                    day_schedule_parts.append(f"Thursday: {convert_to_12hr(thurs_open)} - {convert_to_12hr(thurs_close)}")
+                    clean_df.at[idx, 'thursday_hours'] = f"{thurs_open} - {thurs_close}"
+                else:
+                    clean_df.at[idx, 'thursday_hours'] = ''
+                
+                fri_open = str(update.get('fri_start_update', '')).strip()
+                fri_close = str(update.get('fri_close_update', '')).strip()
+                if 'Friday' in open_days and fri_open and fri_close:
+                    day_schedule_parts.append(f"Friday: {convert_to_12hr(fri_open)} - {convert_to_12hr(fri_close)}")
+                    clean_df.at[idx, 'friday_hours'] = f"{fri_open} - {fri_close}"
+                else:
+                    clean_df.at[idx, 'friday_hours'] = ''
+                
+                sat_open = str(update.get('sat_start_update', '')).strip()
+                sat_close = str(update.get('sat_close_update', '')).strip()
+                if 'Saturday' in open_days and sat_open and sat_close:
+                    day_schedule_parts.append(f"Saturday: {convert_to_12hr(sat_open)} - {convert_to_12hr(sat_close)}")
+                    clean_df.at[idx, 'saturday_hours'] = f"{sat_open} - {sat_close}"
+                else:
+                    clean_df.at[idx, 'saturday_hours'] = ''
+                
+                sun_open = str(update.get('sun_start_update', '')).strip()
+                sun_close = str(update.get('sun_close_update', '')).strip()
+                if 'Sunday' in open_days and sun_open and sun_close:
+                    day_schedule_parts.append(f"Sunday: {convert_to_12hr(sun_open)} - {convert_to_12hr(sun_close)}")
+                    clean_df.at[idx, 'sunday_hours'] = f"{sun_open} - {sun_close}"
+                else:
+                    clean_df.at[idx, 'sunday_hours'] = ''
+                
+                clean_df.at[idx, 'full_schedule'] = '; '.join(day_schedule_parts)
+                site_updated = True
+        
+        # Update services if provided
+        site_services = []
+        for field_name, label in mappings['services_offered_update'].items():
+            if field_name in updates_df.columns:
+                clean_field = 'has_' + label.lower().replace(' ', '_').replace('-', '_')
+                
+                if update.get(field_name, 0) == 1:
+                    site_services.append(label)
+                    clean_df.at[idx, clean_field] = True
+                    site_updated = True
+                else:
+                    clean_df.at[idx, clean_field] = False
+        
+        if site_services:
+            clean_df.at[idx, 'services_offered'] = ', '.join(site_services)
+        
+        # Update closures if provided
+        if pd.notna(update.get('other_closures_updates')):
+            holidays = calculate_holidays(2026)
+            all_closures = []
+            
+            for i in range(1, 11):
+                date_val = update.get(f'closure_{i}_update')
+                if pd.notna(date_val):
+                    all_closures.append(str(date_val))
+            
+            clean_df.at[idx, 'special_closure_dates'] = ', '.join(all_closures) if all_closures else ''
+            site_updated = True
+        
+        if site_updated:
+            clean_df.at[idx, 'last_updated'] = datetime.now().isoformat()
+            clean_df.at[idx, 'data_source'] = 'in-season update'
+            update_count += 1
             print(f"  ✓ Updated: {clean_df.at[idx, 'site_name']}")
-        
-        clean_df.at[idx, 'last_updated'] = datetime.now().isoformat()
-        clean_df.at[idx, 'data_source'] = 'in-season update'
-        update_count += 1
     
     print(f"  ✓ Applied {update_count} updates")
     return clean_df
 
 
-# ==================== STEP 6: SAVE ====================
+# ==================== STEP 6: FILTER ====================
+def filter_accepted_only(df):
+    """Keep only Accepted sites for public display"""
+    print("→ Filtering to Accepted sites only...")
+    
+    before_count = len(df)
+    df_filtered = df[df['review_status'] == 'Accepted'].copy()
+    after_count = len(df_filtered)
+    
+    print(f"  ✓ Filtered from {before_count} to {after_count} sites")
+    return df_filtered
+
+
+# ==================== STEP 7: SAVE ====================
 def save_files(df):
     """Save output"""
     print("→ Saving files...")
@@ -547,9 +711,6 @@ def save_files(df):
 Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 Total Sites: {len(df)}
-Accepted: {len(df[df['review_status'] == 'Accepted'])}
-Pending: {len(df[df['review_status'] == 'Pending'])}
-
 Geocoded: {df['geocoded'].sum()}
 """
     
@@ -575,7 +736,8 @@ def main():
         preseason, updates = split_preseason_and_updates(raw_data)
         clean_data_df = clean_data(preseason, mappings)
         clean_data_df = geocode_addresses(clean_data_df)
-        final_data = apply_updates(clean_data_df, updates)
+        final_data = apply_updates(clean_data_df, updates, mappings)
+        final_data = filter_accepted_only(final_data)
         save_files(final_data)
         
         print("="*60)
