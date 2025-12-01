@@ -11,43 +11,277 @@
             padding: 0;
             font-family: Arial, sans-serif;
         }
+        
+        .filters {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            z-index: 1000;
+            max-width: 250px;
+        }
+        
+        .filters h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+        }
+        
+        .filter-group {
+            margin-bottom: 15px;
+        }
+        
+        .filter-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .filter-option {
+            margin: 5px 0;
+            font-size: 13px;
+        }
+        
+        .filter-option input {
+            margin-right: 5px;
+        }
+        
         #map {
             width: 100%;
             height: 100vh;
         }
+        
+        .status-open {
+            color: green;
+            font-weight: bold;
+        }
+        
+        .status-closed {
+            color: red;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
+    <div class="filters">
+        <h3>Filters</h3>
+        
+        <div class="filter-group">
+            <label>Status</label>
+            <div class="filter-option">
+                <input type="checkbox" id="filter-open" checked>
+                <label for="filter-open">Open Now</label>
+            </div>
+            <div class="filter-option">
+                <input type="checkbox" id="filter-closed" checked>
+                <label for="filter-closed">Closed Now</label>
+            </div>
+        </div>
+        
+        <div class="filter-group">
+            <label>Services</label>
+            <div class="filter-option">
+                <input type="checkbox" id="filter-charging" checked>
+                <label for="filter-charging">Charging</label>
+            </div>
+            <div class="filter-option">
+                <input type="checkbox" id="filter-pet" checked>
+                <label for="filter-pet">Pet Services</label>
+            </div>
+            <div class="filter-option">
+                <input type="checkbox" id="filter-showers" checked>
+                <label for="filter-showers">Showers</label>
+            </div>
+            <div class="filter-option">
+                <input type="checkbox" id="filter-food" checked>
+                <label for="filter-food">Food</label>
+            </div>
+        </div>
+        
+        <button onclick="resetFilters()" style="width: 100%; padding: 8px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">Reset Filters</button>
+    </div>
+    
     <div id="map"></div>
     
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
     <script>
-        const map = L.map('map').setView([33.4484, -112.0740], 11);
+        const map = L.map('map');
         
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap'
         }).addTo(map);
         
+        let allSites = [];
+        let markers = L.layerGroup().addTo(map);
+        
+        // Custom icons for each site type
+        const icons = {
+            'Cooling Center': L.icon({
+                iconUrl: 'https://azmag.gov/portals/0/Heat-Relief/hrn-icon-cooling.png',
+                iconSize: [32, 37],
+                iconAnchor: [16, 37],
+                popupAnchor: [0, -37]
+            }),
+            'Respite Center': L.icon({
+                iconUrl: 'https://azmag.gov/portals/0/Heat-Relief/hrn-icon-respite.png',
+                iconSize: [32, 37],
+                iconAnchor: [16, 37],
+                popupAnchor: [0, -37]
+            }),
+            'Hydration Station': L.icon({
+                iconUrl: 'https://azmag.gov/portals/0/Heat-Relief/hrn-icon-hydration.png',
+                iconSize: [32, 37],
+                iconAnchor: [16, 37],
+                popupAnchor: [0, -37]
+            }),
+            'Collection Site': L.icon({
+                iconUrl: 'https://azmag.gov/portals/0/Heat-Relief/hrn-icon-donation.png',
+                iconSize: [32, 37],
+                iconAnchor: [16, 37],
+                popupAnchor: [0, -37]
+            })
+        };
+        
+        // Add event listeners to filters
+        document.querySelectorAll('.filter-option input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', updateMap);
+        });
+        
+        // Load data
         Papa.parse('data/public/sites.csv', {
             download: true,
             header: true,
             complete: function(results) {
-                results.data.forEach(site => {
-                    if (site.latitude && site.longitude) {
-                        L.marker([parseFloat(site.latitude), parseFloat(site.longitude)])
-                            .bindPopup(`
-                                <b>${site.site_name}</b><br>
-                                ${site.site_type}<br>
-                                ${site.address}, ${site.city}<br>
-                                <b>Hours:</b> ${site.full_schedule}<br>
-                                <b>Services:</b> ${site.services_offered}
-                            `)
-                            .addTo(map);
-                    }
-                });
+                allSites = results.data.filter(site => site.latitude && site.longitude);
+                updateMap();
             }
         });
+        
+        function isOpenNow(site) {
+            const now = new Date();
+            const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+            const today = dayNames[now.getDay()];
+            const currentTime = now.getHours() * 60 + now.getMinutes(); // minutes since midnight
+            
+            // Check if closed today (special closures)
+            const todayDate = now.toISOString().split('T')[0];
+            const closureDates = (site.special_closure_dates || '').split(',').map(d => d.trim());
+            if (closureDates.includes(todayDate)) {
+                return false;
+            }
+            
+            // Get today's hours
+            const hoursField = `${today}_hours`;
+            const todayHours = site[hoursField];
+            
+            if (!todayHours || todayHours.trim() === '') {
+                return false; // Closed today
+            }
+            
+            // Parse hours (format: "HH:MM - HH:MM")
+            const timeMatch = todayHours.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+            if (!timeMatch) {
+                return false; // Can't parse hours
+            }
+            
+            const openHour = parseInt(timeMatch[1]);
+            const openMin = parseInt(timeMatch[2]);
+            const closeHour = parseInt(timeMatch[3]);
+            const closeMin = parseInt(timeMatch[4]);
+            
+            const openTime = openHour * 60 + openMin;
+            const closeTime = closeHour * 60 + closeMin;
+            
+            // Handle times that cross midnight
+            if (closeTime < openTime) {
+                return currentTime >= openTime || currentTime < closeTime;
+            }
+            
+            return currentTime >= openTime && currentTime < closeTime;
+        }
+        
+        function updateMap() {
+            markers.clearLayers();
+            
+            // Get active filters
+            const showOpen = document.getElementById('filter-open').checked;
+            const showClosed = document.getElementById('filter-closed').checked;
+            
+            const activeServices = {
+                charging: document.getElementById('filter-charging').checked,
+                pet: document.getElementById('filter-pet').checked,
+                showers: document.getElementById('filter-showers').checked,
+                food: document.getElementById('filter-food').checked
+            };
+            
+            // Filter sites
+            const filteredSites = allSites.filter(site => {
+                const isOpen = isOpenNow(site);
+                
+                // Status filter
+                if (!showOpen && isOpen) return false;
+                if (!showClosed && !isOpen) return false;
+                
+                // Service filter
+                const anyServiceFilterActive = Object.values(activeServices).some(v => v);
+                if (anyServiceFilterActive) {
+                    const services = (site.services_offered || '').toLowerCase();
+                    let hasMatchingService = false;
+                    
+                    if (activeServices.charging && services.includes('charging')) hasMatchingService = true;
+                    if (activeServices.pet && services.includes('pet')) hasMatchingService = true;
+                    if (activeServices.showers && services.includes('shower')) hasMatchingService = true;
+                    if (activeServices.food && services.includes('food')) hasMatchingService = true;
+                    
+                    if (!hasMatchingService) return false;
+                }
+                
+                return true;
+            });
+            
+            // Add markers with custom icons
+            filteredSites.forEach(site => {
+                const isOpen = isOpenNow(site);
+                const statusClass = isOpen ? 'status-open' : 'status-closed';
+                const statusText = isOpen ? '🟢 OPEN NOW' : '🔴 CLOSED';
+                
+                // Get the appropriate icon for this site type
+                const icon = icons[site.site_type] || icons['Cooling Center'];
+                
+                L.marker([parseFloat(site.latitude), parseFloat(site.longitude)], { icon: icon })
+                    .bindPopup(`
+                        <b>${site.site_name}</b><br>
+                        <span class="${statusClass}">${statusText}</span><br>
+                        ${site.site_type}<br>
+                        ${site.address}, ${site.city}<br>
+                        <b>Hours:</b> ${site.full_schedule}<br>
+                        <b>Services:</b> ${site.services_offered}
+                    `)
+                    .addTo(markers);
+            });
+            
+            // Auto-fit map to show all filtered markers
+            if (filteredSites.length > 0) {
+                const bounds = L.latLngBounds(
+                    filteredSites.map(site => [parseFloat(site.latitude), parseFloat(site.longitude)])
+                );
+                map.fitBounds(bounds, { padding: [50, 50] });
+            }
+        }
+        
+        function resetFilters() {
+            document.querySelectorAll('.filter-option input[type="checkbox"]').forEach(cb => {
+                cb.checked = true;
+            });
+            updateMap();
+        }
+        
+        // Update map every minute to keep open/closed status current
+        setInterval(updateMap, 60000);
     </script>
 </body>
 </html>
