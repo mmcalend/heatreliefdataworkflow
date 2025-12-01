@@ -1,13 +1,98 @@
 """
 Heat Relief Network Data Pipeline
-Simple script that does everything in order
+Uses REDCap metadata to avoid hardcoding
 """
 import requests
 import pandas as pd
 import os
 from datetime import datetime, timedelta
+from io import StringIO
 
-# ==================== CALCULATE HOLIDAYS ====================
+# ==================== FETCH METADATA ====================
+def fetch_metadata():
+    """Get REDCap data dictionary"""
+    print("→ Fetching metadata from REDCap...")
+    
+    response = requests.post(
+        os.environ['REDCAP_API_URL'],
+        data={
+            'token': os.environ['REDCAP_API_TOKEN'],
+            'content': 'metadata',
+            'format': 'csv'
+        }
+    )
+    
+    metadata = pd.read_csv(StringIO(response.text))
+    print(f"  ✓ Got metadata for {len(metadata)} fields")
+    return metadata
+
+
+def parse_choices(metadata, field_name):
+    """Parse choice list from metadata - returns {1: 'Label', 2: 'Label', ...}"""
+    field_meta = metadata[metadata['field_name'] == field_name]
+    
+    if len(field_meta) == 0:
+        return {}
+    
+    choices_str = field_meta.iloc[0]['select_choices_or_calculations']
+    
+    if not choices_str or str(choices_str) == 'nan':
+        return {}
+    
+    choices = {}
+    for choice in str(choices_str).split('|'):
+        choice = choice.strip()
+        if ',' in choice:
+            code, label = choice.split(',', 1)
+            try:
+                choices[int(code.strip())] = label.strip()
+            except ValueError:
+                choices[code.strip()] = label.strip()
+    
+    return choices
+
+
+def get_checkbox_fields(metadata, base_field_name):
+    """Get checkbox field mappings - returns {'field___1': 'Label 1', ...}"""
+    field_meta = metadata[metadata['field_name'] == base_field_name]
+    
+    if len(field_meta) == 0:
+        return {}
+    
+    choices_str = field_meta.iloc[0]['select_choices_or_calculations']
+    
+    if not choices_str or str(choices_str) == 'nan':
+        return {}
+    
+    checkbox_fields = {}
+    for choice in str(choices_str).split('|'):
+        choice = choice.strip()
+        if ',' in choice:
+            code, label = choice.split(',', 1)
+            code = code.strip()
+            label = label.strip()
+            checkbox_fields[f'{base_field_name}___{code}'] = label
+    
+    return checkbox_fields
+
+
+def build_mappings(metadata):
+    """Build all field mappings from metadata"""
+    print("→ Building field mappings...")
+    
+    mappings = {
+        'state_codes': parse_choices(metadata, 'site_state'),
+        'site_types': parse_choices(metadata, 'site_type'),
+        'review_status': parse_choices(metadata, 'review_status'),
+        'services_offered': get_checkbox_fields(metadata, 'services_offered'),
+        'dow': get_checkbox_fields(metadata, 'dow')
+    }
+    
+    print(f"  ✓ Built mappings for {len(mappings)} field types")
+    return mappings
+
+
+# ==================== HELPERS ====================
 def calculate_holidays(year=2026):
     """Calculate floating holiday dates"""
     holidays = {}
@@ -44,7 +129,7 @@ def convert_to_12hr(time_str):
         return str(time_str)
 
 
-# ==================== STEP 1: GET DATA FROM REDCAP ====================
+# ==================== STEP 1: GET DATA ====================
 def fetch_from_redcap():
     """Pull all records from REDCap"""
     print("→ Fetching data from REDCap...")
@@ -54,21 +139,23 @@ def fetch_from_redcap():
         data={
             'token': os.environ['REDCAP_API_TOKEN'],
             'content': 'record',
-            'format': 'json',
-            'type': 'flat'
+            'format': 'csv',
+            'type': 'flat',
+            'rawOrLabel': 'raw',
+            'rawOrLabelHeaders': 'raw',
+            'exportCheckboxLabel': 'false'
         }
     )
     
-    records = response.json()
-    df = pd.DataFrame(records)
+    df = pd.read_csv(StringIO(response.text))
     print(f"  ✓ Got {len(df)} records")
     return df
 
 
-# ==================== STEP 2: SEPARATE PRESEASON FROM UPDATES ====================
+# ==================== STEP 2: SEPARATE ====================
 def split_preseason_and_updates(df):
-    """Split into base records and in-season updates"""
-    print("→ Separating preseason sites from updates...")
+    """Split into base records and updates"""
+    print("→ Separating preseason from updates...")
     
     preseason = df[
         (df['redcap_repeat_instrument'].isna()) | 
@@ -77,14 +164,14 @@ def split_preseason_and_updates(df):
     
     updates = df[df['redcap_repeat_instrument'] == 'in_season_updates'].copy()
     
-    print(f"  ✓ {len(preseason)} preseason sites, {len(updates)} updates")
+    print(f"  ✓ {len(preseason)} preseason, {len(updates)} updates")
     return preseason, updates
 
 
-# ==================== STEP 3: CLEAN UP THE DATA ====================
-def clean_data(preseason_df):
-    """Convert REDCap messy format to clean CSV format"""
-    print("→ Cleaning up data...")
+# ==================== STEP 3: CLEAN ====================
+def clean_data(preseason_df, mappings):
+    """Clean data using metadata mappings"""
+    print("→ Cleaning data...")
     
     clean = pd.DataFrame()
     
@@ -93,24 +180,22 @@ def clean_data(preseason_df):
     clean['organization_name'] = preseason_df['hrs_org']
     clean['site_name'] = preseason_df['hrs_location']
     
-    # Site type - extract just the first part before " - "
-    if 'site_type' in preseason_df.columns:
-        clean['site_type'] = preseason_df['site_type']
-    else:
-        clean['site_type'] = ''
+    # Site type - use metadata mapping then split on " - "
+    site_type_full = preseason_df['site_type'].map(mappings['site_types'])
+    clean['site_type'] = site_type_full.str.split(' - ').str[0]
     
     clean['contact_email'] = preseason_df['site_email']
     
-    # Address
+    # Address - use state mapping from metadata
     clean['address'] = preseason_df['site_address']
     clean['city'] = preseason_df['site_city']
-    clean['state'] = preseason_df['site_state']
-    clean['zip_code'] = preseason_df['site_zip'].astype(str).str.zfill(5)
+    clean['state'] = preseason_df['site_state'].astype(int).map(mappings['state_codes'])
+    clean['zip_code'] = preseason_df['site_zip'].astype(int).astype(str).str.zfill(5)
     
     clean['full_address'] = (
         preseason_df['site_address'] + ', ' +
         preseason_df['site_city'] + ', ' +
-        preseason_df['site_state'].astype(str) + ' ' +
+        preseason_df['site_state'].astype(int).map(mappings['state_codes']) + ' ' +
         clean['zip_code']
     )
     
@@ -122,7 +207,7 @@ def clean_data(preseason_df):
     # Day names
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
-    # Hours - detailed breakdown
+    # Hours - detailed processing
     full_schedules = []
     monday_hours = []
     tuesday_hours = []
@@ -138,7 +223,7 @@ def clean_data(preseason_df):
     for idx, row in preseason_df.iterrows():
         same_hours = row.get('same_hours_everyday', False)
         
-        # Get which days are open
+        # Get open days using dow checkboxes
         open_days = []
         for i, day in enumerate(day_names, start=1):
             checkbox_value = row.get(f'dow___{i}')
@@ -148,6 +233,7 @@ def clean_data(preseason_df):
         days_open_list.append(', '.join(open_days))
         
         if same_hours:
+            # Same hours every day
             opening = str(row.get('standard_start_time', '')).strip()
             closing = str(row.get('standard_close_time', '')).strip()
             
@@ -161,6 +247,7 @@ def clean_data(preseason_df):
             else:
                 full_schedules.append('')
             
+            # Populate individual day columns ONLY for open days
             hours_string = f"{opening} - {closing}" if opening and closing else ""
             monday_hours.append(hours_string if 'Monday' in open_days else "")
             tuesday_hours.append(hours_string if 'Tuesday' in open_days else "")
@@ -170,40 +257,81 @@ def clean_data(preseason_df):
             saturday_hours.append(hours_string if 'Saturday' in open_days else "")
             sunday_hours.append(hours_string if 'Sunday' in open_days else "")
         else:
+            # Different hours per day
             opening_times.append('')
             closing_times.append('')
             
             schedule_parts = []
-            day_fields = [
-                ('Monday', 'mon_start', 'mon_close'),
-                ('Tuesday', 'tues_start', 'tues_close'),
-                ('Wednesday', 'wed_start', 'wed_close'),
-                ('Thursday', 'thurs_start', 'thurs_close'),
-                ('Friday', 'fri_start', 'fri_close'),
-                ('Saturday', 'sat_start', 'sat_close'),
-                ('Sunday', 'sun_start', 'sun_close')
-            ]
             
-            day_hours = []
-            for day, start_field, close_field in day_fields:
-                start = row.get(start_field)
-                close = row.get(close_field)
-                if pd.notna(start) and pd.notna(close):
-                    hours = f"{start} - {close}"
-                    day_hours.append(hours)
-                    start_12 = convert_to_12hr(start)
-                    close_12 = convert_to_12hr(close)
-                    schedule_parts.append(f"{day}: {start_12} - {close_12}")
-                else:
-                    day_hours.append("")
+            # Monday
+            mon_open = row.get('mon_start')
+            mon_close = row.get('mon_close')
+            if pd.notna(mon_open) and pd.notna(mon_close):
+                mon_hrs = f"{mon_open} - {mon_close}"
+                monday_hours.append(mon_hrs)
+                schedule_parts.append(f"Monday: {convert_to_12hr(mon_open)} - {convert_to_12hr(mon_close)}")
+            else:
+                monday_hours.append("")
             
-            monday_hours.append(day_hours[0])
-            tuesday_hours.append(day_hours[1])
-            wednesday_hours.append(day_hours[2])
-            thursday_hours.append(day_hours[3])
-            friday_hours.append(day_hours[4])
-            saturday_hours.append(day_hours[5])
-            sunday_hours.append(day_hours[6])
+            # Tuesday
+            tue_open = row.get('tues_start')
+            tue_close = row.get('tues_close')
+            if pd.notna(tue_open) and pd.notna(tue_close):
+                tue_hrs = f"{tue_open} - {tue_close}"
+                tuesday_hours.append(tue_hrs)
+                schedule_parts.append(f"Tuesday: {convert_to_12hr(tue_open)} - {convert_to_12hr(tue_close)}")
+            else:
+                tuesday_hours.append("")
+            
+            # Wednesday
+            wed_open = row.get('wed_start')
+            wed_close = row.get('wed_close')
+            if pd.notna(wed_open) and pd.notna(wed_close):
+                wed_hrs = f"{wed_open} - {wed_close}"
+                wednesday_hours.append(wed_hrs)
+                schedule_parts.append(f"Wednesday: {convert_to_12hr(wed_open)} - {convert_to_12hr(wed_close)}")
+            else:
+                wednesday_hours.append("")
+            
+            # Thursday
+            thu_open = row.get('thurs_start')
+            thu_close = row.get('thurs_close')
+            if pd.notna(thu_open) and pd.notna(thu_close):
+                thu_hrs = f"{thu_open} - {thu_close}"
+                thursday_hours.append(thu_hrs)
+                schedule_parts.append(f"Thursday: {convert_to_12hr(thu_open)} - {convert_to_12hr(thu_close)}")
+            else:
+                thursday_hours.append("")
+            
+            # Friday
+            fri_open = row.get('fri_start')
+            fri_close = row.get('fri_close')
+            if pd.notna(fri_open) and pd.notna(fri_close):
+                fri_hrs = f"{fri_open} - {fri_close}"
+                friday_hours.append(fri_hrs)
+                schedule_parts.append(f"Friday: {convert_to_12hr(fri_open)} - {convert_to_12hr(fri_close)}")
+            else:
+                friday_hours.append("")
+            
+            # Saturday
+            sat_open = row.get('sat_start')
+            sat_close = row.get('sat_close')
+            if pd.notna(sat_open) and pd.notna(sat_close):
+                sat_hrs = f"{sat_open} - {sat_close}"
+                saturday_hours.append(sat_hrs)
+                schedule_parts.append(f"Saturday: {convert_to_12hr(sat_open)} - {convert_to_12hr(sat_close)}")
+            else:
+                saturday_hours.append("")
+            
+            # Sunday
+            sun_open = row.get('sun_start')
+            sun_close = row.get('sun_close')
+            if pd.notna(sun_open) and pd.notna(sun_close):
+                sun_hrs = f"{sun_open} - {sun_close}"
+                sunday_hours.append(sun_hrs)
+                schedule_parts.append(f"Sunday: {convert_to_12hr(sun_open)} - {convert_to_12hr(sun_close)}")
+            else:
+                sunday_hours.append("")
             
             full_schedules.append('; '.join(schedule_parts))
     
@@ -220,49 +348,33 @@ def clean_data(preseason_df):
     clean['saturday_hours'] = saturday_hours
     clean['sunday_hours'] = sunday_hours
     
-    # Services - individual flags AND comma-separated list
-    service_fields = [col for col in preseason_df.columns if col.startswith('services___')]
-    
-    # Initialize service columns
-    clean['has_charging'] = False
-    clean['has_pet_services'] = False
-    clean['has_showers'] = False
-    clean['has_storage_for_belongings'] = False
-    clean['has_food'] = False
-    clean['has_internet'] = False
-    
+    # Services - use metadata to get field names dynamically
     service_lists = []
     for idx, row in preseason_df.iterrows():
         site_services = []
-        for field in service_fields:
-            if row.get(field) == 1 or row.get(field) == '1':
-                # Extract service name
-                service_name = field.replace('services___', '').replace('_', ' ').title()
-                site_services.append(service_name)
+        for field_name, label in mappings['services_offered'].items():
+            if field_name in preseason_df.columns:
+                # Create clean field name
+                clean_field = 'has_' + label.lower().replace(' ', '_').replace('-', '_')
                 
-                # Set individual flag
-                if 'charging' in field:
-                    clean.at[idx, 'has_charging'] = True
-                elif 'pet' in field:
-                    clean.at[idx, 'has_pet_services'] = True
-                elif 'shower' in field:
-                    clean.at[idx, 'has_showers'] = True
-                elif 'storage' in field:
-                    clean.at[idx, 'has_storage_for_belongings'] = True
-                elif 'food' in field:
-                    clean.at[idx, 'has_food'] = True
-                elif 'internet' in field or 'wifi' in field:
-                    clean.at[idx, 'has_internet'] = True
+                # Set flag
+                if clean_field not in clean.columns:
+                    clean[clean_field] = False
+                clean.at[idx, clean_field] = bool(row.get(field_name, 0))
+                
+                # Add to list if checked
+                if row.get(field_name, 0) == 1:
+                    site_services.append(label)
         
-        service_lists.append(', '.join(site_services))
+        service_lists.append(', '.join(site_services) if site_services else '')
     
     clean['services_offered'] = service_lists
     
-    # Closures - combine special dates and holidays
+    # Closures - combine special + holidays
     holidays = calculate_holidays(2026)
     closure_dates = []
     
-    for idx, row in preseason_df.iterrows():
+    for _, row in preseason_df.iterrows():
         all_closures = []
         
         # Special closure dates
@@ -285,27 +397,14 @@ def clean_data(preseason_df):
     
     clean['special_closure_dates'] = closure_dates
     
-    # Status
-    print(f"  → Checking review_status values...")
-    if 'review_status' in preseason_df.columns:
-        unique_statuses = preseason_df['review_status'].unique()
-        print(f"     REDCap sent: {unique_statuses}")
-        
-        status_map = {
-            0: 'Pending', '0': 'Pending',
-            1: 'Accepted', '1': 'Accepted',
-            2: 'Under Review', '2': 'Under Review',
-            3: 'Accepted', '3': 'Accepted'
-        }
-        
-        clean['review_status'] = preseason_df['review_status'].map(status_map).fillna('Pending')
-        
-        for idx, row in clean.iterrows():
-            original = preseason_df.loc[idx, 'review_status']
-            mapped = row['review_status']
-            print(f"     Site {row['record_id']}: {original} → {mapped}")
-    else:
-        clean['review_status'] = 'Accepted'
+    # Status - use metadata mapping
+    clean['review_status'] = preseason_df['review_status'].fillna(1).astype(int).map(mappings['review_status'])
+    
+    print(f"  → Status mapping from metadata: {mappings['review_status']}")
+    for idx, row in clean.iterrows():
+        original = preseason_df.loc[idx, 'review_status']
+        mapped = row['review_status']
+        print(f"     Site {row['record_id']}: {original} → {mapped}")
     
     # Metadata
     clean['last_updated'] = datetime.now().isoformat()
@@ -313,14 +412,14 @@ def clean_data(preseason_df):
     
     print(f"  ✓ Cleaned {len(clean)} sites")
     accepted_count = len(clean[clean['review_status'] == 'Accepted'])
-    print(f"  ✓ {accepted_count} sites are Accepted")
+    print(f"  ✓ {accepted_count} are Accepted")
     
     return clean
 
 
 # ==================== STEP 4: GEOCODE ====================
 def geocode_addresses(df):
-    """Add coordinates using Mapbox"""
+    """Geocode only NEW Accepted sites"""
     print("→ Geocoding addresses...")
     
     mapbox_token = os.environ.get('MAPBOX_API_TOKEN')
@@ -351,6 +450,7 @@ def geocode_addresses(df):
     for idx, row in df.iterrows():
         record_id = str(row['record_id'])
         
+        # Reuse existing coordinates
         if record_id in previously_geocoded:
             df.at[idx, 'latitude'] = previously_geocoded[record_id]['lat']
             df.at[idx, 'longitude'] = previously_geocoded[record_id]['lon']
@@ -358,10 +458,12 @@ def geocode_addresses(df):
             reused_count += 1
             continue
         
+        # Only geocode Accepted sites
         if row['review_status'] != 'Accepted':
             skipped_count += 1
             continue
         
+        # Geocode this NEW Accepted site
         try:
             print(f"  → Geocoding: {row['site_name']}")
             response = requests.get(
@@ -464,9 +566,14 @@ def main():
     print("="*60 + "\n")
     
     try:
+        # Fetch metadata first (so we never hardcode field mappings)
+        metadata = fetch_metadata()
+        mappings = build_mappings(metadata)
+        
+        # Run pipeline
         raw_data = fetch_from_redcap()
         preseason, updates = split_preseason_and_updates(raw_data)
-        clean_data_df = clean_data(preseason)
+        clean_data_df = clean_data(preseason, mappings)
         clean_data_df = geocode_addresses(clean_data_df)
         final_data = apply_updates(clean_data_df, updates)
         save_files(final_data)
@@ -477,6 +584,8 @@ def main():
         
     except Exception as e:
         print(f"\n✗ ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         raise
 
 
