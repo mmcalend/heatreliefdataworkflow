@@ -1,16 +1,10 @@
-"""
-Update ArcGIS Online Feature Layer
-This pushes your data to ArcGIS so maps auto-update
-"""
 import pandas as pd
 import requests
 import json
 import os
 
-# ==================== STEP 1: LOGIN TO ARCGIS ====================
+# arcgis login
 def login_to_arcgis():
-    """Get an access token from ArcGIS Online"""
-    print("→ Logging into ArcGIS Online...")
     
     response = requests.post(
         'https://www.arcgis.com/sharing/rest/generateToken',
@@ -30,7 +24,7 @@ def login_to_arcgis():
         raise Exception(f"Login failed: {result}")
 
 
-# ==================== STEP 2: CONVERT CSV TO ARCGIS FORMAT ====================
+# reformat
 def csv_to_features(csv_path):
     """Convert CSV to ArcGIS feature format"""
     print("→ Converting data to ArcGIS format...")
@@ -71,7 +65,7 @@ def csv_to_features(csv_path):
     return features
 
 
-# ==================== STEP 3: UPDATE ARCGIS LAYER ====================
+# Update layer
 def update_feature_layer(token, layer_url, features):
     """Replace all features in the ArcGIS layer with new data"""
     print("→ Updating ArcGIS feature layer...")
@@ -105,7 +99,7 @@ def update_feature_layer(token, layer_url, features):
         print(f"  ⚠ Response: {result}")
 
 
-# ==================== RUN EVERYTHING ====================
+# Run
 def main():
     """Update ArcGIS Online with latest data"""
     print("\n" + "="*60)
