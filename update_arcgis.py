@@ -1,10 +1,12 @@
+"""Update ArcGIS Online Feature Layer"""
 import pandas as pd
 import requests
 import json
 import os
 
-# arcgis login
-def login_to_arcgis():
+def get_token():
+    """Login to ArcGIS Online"""
+    print("→ Logging into ArcGIS Online...")
     
     response = requests.post(
         'https://www.arcgis.com/sharing/rest/generateToken',
@@ -24,84 +26,111 @@ def login_to_arcgis():
         raise Exception(f"Login failed: {result}")
 
 
-# reformat
-def csv_to_features(csv_path):
-    """Convert CSV to ArcGIS feature format"""
-    print("→ Converting data to ArcGIS format...")
+def csv_to_features():
+    """Convert CSV to ArcGIS features"""
+    print("→ Loading CSV...")
     
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv('data/public/sites.csv')
+    
+    # Only include geocoded sites
+    df = df[df['geocoded'] == True]
     
     features = []
     for _, row in df.iterrows():
-        # Skip sites without coordinates
-        if pd.isna(row['latitude']) or pd.isna(row['longitude']):
-            continue
-        
-        # Create a feature (point on map with data)
         feature = {
             'geometry': {
                 'x': float(row['longitude']),
                 'y': float(row['latitude']),
-                'spatialReference': {'wkid': 4326}  # Standard GPS coordinates
+                'spatialReference': {'wkid': 4326}
             },
             'attributes': {
-                'site_id': int(row['site_id']),
+                'record_id': int(row['record_id']),
+                'organization_name': str(row.get('organization_name', '')),
                 'site_name': str(row['site_name']),
-                'organization': str(row.get('organization', '')),
+                'site_type': str(row.get('site_type', '')),
+                'contact_email': str(row.get('contact_email', '')),
                 'address': str(row.get('address', '')),
                 'city': str(row.get('city', '')),
                 'state': str(row.get('state', '')),
-                'zip': str(row.get('zip', '')),
-                'hours': str(row.get('hours', '')),
-                'services': str(row.get('services', '')),
-                'email': str(row.get('email', '')),
-                'status': str(row.get('status', '')),
-                'last_updated': str(row.get('last_updated', ''))
+                'zip_code': int(row.get('zip_code', 0)) if pd.notna(row.get('zip_code')) else 0,
+                'full_address': str(row.get('full_address', '')),
+                'latitude': float(row['latitude']),
+                'longitude': float(row['longitude']),
+                'geocoded': str(row.get('geocoded', False)),
+                'same_hours_everyday': str(row.get('same_hours_everyday', False)),
+                'opening_time': str(row.get('opening_time', '')),
+                'closing_time': str(row.get('closing_time', '')),
+                'full_schedule': str(row.get('full_schedule', '')),
+                'days_open': str(row.get('days_open', '')),
+                'monday_hours': str(row.get('monday_hours', '')),
+                'tuesday_hours': str(row.get('tuesday_hours', '')),
+                'wednesday_hours': str(row.get('wednesday_hours', '')),
+                'thursday_hours': str(row.get('thursday_hours', '')),
+                'friday_hours': str(row.get('friday_hours', '')),
+                'saturday_hours': str(row.get('saturday_hours', '')),
+                'sunday_hours': str(row.get('sunday_hours', '')),
+                'has_charging': str(row.get('has_charging', False)),
+                'has_pet_services': str(row.get('has_pet_services', False)),
+                'has_showers': str(row.get('has_showers', False)),
+                'has_storage_for_belongings': str(row.get('has_storage_for_belongings', False)),
+                'has_food': str(row.get('has_food', False)),
+                'has_internet': str(row.get('has_internet', False)),
+                'services_offered': str(row.get('services_offered', '')),
+                'special_closure_dates': str(row.get('special_closure_dates', '')),
+                'review_status': str(row.get('review_status', '')),
+                'last_updated': str(row.get('last_updated', '')),
+                'data_source': str(row.get('data_source', ''))
             }
         }
         features.append(feature)
     
-    print(f"  Converted {len(features)} sites")
+    print(f"  ✓ Converted {len(features)} sites")
     return features
 
 
-# Update layer
-def update_feature_layer(token, layer_url, features):
-    """Replace all features in the ArcGIS layer with new data"""
-    print("→ Updating ArcGIS feature layer...")
+def update_layer(token, layer_url, features):
+    """Replace all features in ArcGIS layer"""
+    print("→ Updating ArcGIS layer...")
     
-    # Step 1: Delete all existing features
+    # Delete all existing
     delete_response = requests.post(
         f"{layer_url}/deleteFeatures",
         data={
-            'where': '1=1',  # Delete everything
+            'where': '1=1',
             'f': 'json',
             'token': token
         }
     )
-    print("  Cleared old data")
+    print("  ✓ Cleared old data")
     
-    # Step 2: Add new features
-    add_response = requests.post(
-        f"{layer_url}/addFeatures",
-        data={
-            'features': json.dumps(features),
-            'f': 'json',
-            'token': token
-        }
-    )
+    # Add new features (in batches if needed)
+    batch_size = 1000
+    total_added = 0
     
-    result = add_response.json()
-    if 'addResults' in result:
-        success_count = sum(1 for r in result['addResults'] if r.get('success'))
-        print(f"  ✓ Added {success_count} sites")
-    else:
-        print(f"  ⚠ Response: {result}")
+    for i in range(0, len(features), batch_size):
+        batch = features[i:i+batch_size]
+        
+        add_response = requests.post(
+            f"{layer_url}/addFeatures",
+            data={
+                'features': json.dumps(batch),
+                'f': 'json',
+                'token': token
+            }
+        )
+        
+        result = add_response.json()
+        if 'addResults' in result:
+            success_count = sum(1 for r in result['addResults'] if r.get('success'))
+            total_added += success_count
+            print(f"  ✓ Added batch: {success_count} sites")
+        else:
+            print(f"  ⚠ Error in batch: {result}")
+    
+    print(f"  ✓ Total added: {total_added} sites to ArcGIS")
 
 
-# Run
 def main():
-    """Update ArcGIS Online with latest data"""
     print("\n" + "="*60)
     print("UPDATING ARCGIS ONLINE")
     print("="*60 + "\n")
@@ -109,20 +138,13 @@ def main():
     try:
         # Check if configured
         if not os.environ.get('ARCGIS_USERNAME'):
-            print("⚠ ArcGIS not configured, skipping")
-            print("  To enable: Add ARCGIS_USERNAME, ARCGIS_PASSWORD,")
-            print("  and ARCGIS_LAYER_URL to GitHub secrets")
+            print("⚠ ArcGIS not configured - skipping")
             return
         
-        # Get credentials
-        token = login_to_arcgis()
+        token = get_token()
         layer_url = os.environ['ARCGIS_LAYER_URL']
-        
-        # Convert CSV to features
-        features = csv_to_features('data/public/sites.csv')
-        
-        # Update layer
-        update_feature_layer(token, layer_url, features)
+        features = csv_to_features()
+        update_layer(token, layer_url, features)
         
         print("\n" + "="*60)
         print("✓ ARCGIS UPDATED")
@@ -130,8 +152,10 @@ def main():
         
     except Exception as e:
         print(f"\n✗ ERROR: {e}")
-        # Don't fail the whole pipeline if ArcGIS fails
-        print("Continuing anyway...")
+        import traceback
+        traceback.print_exc()
+        # Don't fail the whole workflow
+        print("\nContinuing anyway...")
 
 
 if __name__ == '__main__':
