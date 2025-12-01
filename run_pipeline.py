@@ -3,7 +3,7 @@ import pandas as pd
 import os
 from datetime import datetime
 
-# Import from redcap
+# ==================== STEP 1: GET DATA FROM REDCAP ====================
 def fetch_from_redcap():
     """Pull all records from REDCap"""
     print("→ Fetching data from REDCap...")
@@ -24,7 +24,7 @@ def fetch_from_redcap():
     return df
 
 
-# Pre-season
+# ==================== STEP 2: SEPARATE PRESEASON FROM UPDATES ====================
 def split_preseason_and_updates(df):
     """Split into base records and in-season updates"""
     print("→ Separating preseason sites from updates...")
@@ -42,7 +42,7 @@ def split_preseason_and_updates(df):
     return preseason, updates
 
 
-# Clean
+# ==================== STEP 3: CLEAN UP THE DATA ====================
 def clean_data(preseason_df):
     """Convert REDCap messy format to clean CSV format"""
     print("→ Cleaning up data...")
@@ -68,7 +68,7 @@ def clean_data(preseason_df):
         clean['zip']
     )
     
-    # Hours 
+    # Hours - keep it simple, just show what they entered
     clean['hours'] = ''
     for idx, row in preseason_df.iterrows():
         if row.get('same_hours_everyday'):
@@ -88,7 +88,7 @@ def clean_data(preseason_df):
             
             clean.at[idx, 'hours'] = '; '.join(hours_list)
     
-    # Services 
+    # Services - just list them
     clean['services'] = ''
     service_fields = [col for col in preseason_df.columns if col.startswith('services___')]
     for idx, row in preseason_df.iterrows():
@@ -96,8 +96,27 @@ def clean_data(preseason_df):
                    for col in service_fields if row.get(col) == 1]
         clean.at[idx, 'services'] = ', '.join(services)
     
-    # Status
-    clean['status'] = preseason_df['review_status'].map({1: 'Pending', 2: 'Under Review', 3: 'Accepted'}).fillna('Pending')
+    # Status - check what values we actually have and map them
+    # Print unique values to see what REDCap is sending
+    if len(preseason_df) > 0:
+        unique_statuses = preseason_df['review_status'].unique()
+        print(f"  Found status values: {unique_statuses}")
+    
+    # Map status values - adjust these numbers based on your REDCap setup
+    # Common mappings: 0=Pending, 1=Accepted, 2=Rejected
+    # Or: 1=Pending, 2=Under Review, 3=Accepted
+    status_map = {
+        0: 'Pending',
+        1: 'Accepted',  # Try this first
+        2: 'Rejected',
+        3: 'Accepted',  # In case it's the other mapping
+        '0': 'Pending',
+        '1': 'Accepted',
+        '2': 'Rejected', 
+        '3': 'Accepted'
+    }
+    
+    clean['status'] = preseason_df['review_status'].map(status_map).fillna('Pending')
     
     # Coordinates (empty for now, will geocode next)
     clean['latitude'] = None
@@ -110,11 +129,11 @@ def clean_data(preseason_df):
     return clean
 
 
-# Geocode
+# ==================== STEP 4: ADD COORDINATES ====================
 def geocode_addresses(df, previous_csv_path='data/public/sites.csv'):
     """
     Add lat/lon coordinates using Mapbox
-    Only geocodes NEWLY ACCEPTED sites to save API credits
+    Only geocodes NEW sites to save API credits
     """
     print("→ Geocoding addresses...")
     
@@ -123,7 +142,7 @@ def geocode_addresses(df, previous_csv_path='data/public/sites.csv'):
         print("  ⚠ No Mapbox token, skipping geocoding")
         return df
     
-    
+    # Load previous data to see what we've already geocoded
     previously_geocoded = set()
     if os.path.exists(previous_csv_path):
         try:
@@ -134,21 +153,16 @@ def geocode_addresses(df, previous_csv_path='data/public/sites.csv'):
             )
             print(f"  Found {len(previously_geocoded)} previously geocoded sites")
         except:
-            pass  # If can't read previous file, geocode everything accepted
+            pass  # If can't read previous file, geocode everything
     
     geocoded_count = 0
-    skipped_count = 0
     
     for idx, row in df.iterrows():
         site_id = str(row['site_id'])
         
-        # Only geocode if site is accepted and hasnt been geocoded before
-        if row['status'] != 'Accepted':
-            skipped_count += 1
-            continue
-            
+        # Skip if already geocoded
         if site_id in previously_geocoded:
-            # Already geocoded, copy from previous data
+            # Copy coordinates from previous data
             if os.path.exists(previous_csv_path):
                 try:
                     prev_df = pd.read_csv(previous_csv_path)
@@ -160,9 +174,9 @@ def geocode_addresses(df, previous_csv_path='data/public/sites.csv'):
                     pass
             continue
         
-        # This is a NEWLY ACCEPTED site - geocode it
+        # This is a NEW site - geocode it!
         try:
-            print(f"  Geocoding newly accepted site: {row['site_name']}")
+            print(f"  Geocoding: {row['site_name']}")
             response = requests.get(
                 f"https://api.mapbox.com/geocoding/v5/mapbox.places/{row['full_address']}.json",
                 params={'access_token': mapbox_token, 'limit': 1}
@@ -175,19 +189,23 @@ def geocode_addresses(df, previous_csv_path='data/public/sites.csv'):
                 df.at[idx, 'latitude'] = coords[1]
                 geocoded_count += 1
         except Exception as e:
-            print(f"  Failed to geocode {row['site_name']}: {e}")
+            print(f"  ⚠ Failed to geocode {row['site_name']}: {e}")
     
-    print(f"  Geocoded {geocoded_count} newly accepted sites")
-    print(f"  Skipped {skipped_count} pending/rejected sites (no coordinates needed)")
+    if geocoded_count > 0:
+        print(f"  ✓ Geocoded {geocoded_count} new sites")
+    else:
+        print(f"  All sites already have coordinates")
+    
     return df
 
 
-# In season updates
+# ==================== STEP 5: APPLY IN-SEASON UPDATES ====================
 def apply_updates(clean_df, updates_df):
-
+    """Apply in-season updates on top of preseason data"""
+    print("→ Applying in-season updates...")
     
     if updates_df.empty:
-       
+        print("  No updates to apply")
         return clean_df
     
     # Get most recent update for each site
@@ -196,7 +214,7 @@ def apply_updates(clean_df, updates_df):
     
     update_count = 0
     for record_id, update in latest_updates.iterrows():
-        # Find the site in clean data
+        # Find the site in our clean data
         mask = clean_df['site_id'] == record_id
         if not mask.any():
             continue
@@ -215,9 +233,10 @@ def apply_updates(clean_df, updates_df):
     return clean_df
 
 
-# Output
+# ==================== STEP 6: SAVE OUTPUT ====================
 def save_files(df):
-
+    """Save CSV and create archive"""
+    print("→ Saving output files...")
     
     # Save main CSV
     os.makedirs('data/public', exist_ok=True)
@@ -241,6 +260,7 @@ Pending: {len(df[df['status'] == 'Pending'])}
         f.write(summary)
 
 
+# ==================== RUN EVERYTHING ====================
 def main():
     """Run the complete pipeline"""
     print("\n" + "="*60)
@@ -265,9 +285,13 @@ def main():
         
         # Step 6: Save
         save_files(final_data)
-    
+        
+        print("\n" + "="*60)
+        print("✓ COMPLETE")
+        print("="*60 + "\n")
         
     except Exception as e:
+        print(f"\n✗ ERROR: {e}")
         raise
 
 
