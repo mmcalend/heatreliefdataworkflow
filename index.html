@@ -81,26 +81,6 @@
             </div>
         </div>
         
-        <div class="filter-group">
-            <label>Services</label>
-            <div class="filter-option">
-                <input type="checkbox" id="filter-charging" checked>
-                <label for="filter-charging">Charging</label>
-            </div>
-            <div class="filter-option">
-                <input type="checkbox" id="filter-pet" checked>
-                <label for="filter-pet">Pet Services</label>
-            </div>
-            <div class="filter-option">
-                <input type="checkbox" id="filter-showers" checked>
-                <label for="filter-showers">Showers</label>
-            </div>
-            <div class="filter-option">
-                <input type="checkbox" id="filter-food" checked>
-                <label for="filter-food">Food</label>
-            </div>
-        </div>
-        
         <button onclick="resetFilters()" style="width: 100%; padding: 8px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">Reset Filters</button>
     </div>
     
@@ -156,10 +136,52 @@
             download: true,
             header: true,
             complete: function(results) {
-                allSites = results.data.filter(site => site.latitude && site.longitude);
+                // Filter out rows with missing coordinates
+                allSites = results.data.filter(site => {
+                    const hasLat = site.latitude && site.latitude.trim() !== '';
+                    const hasLng = site.longitude && site.longitude.trim() !== '';
+                    const validLat = hasLat && !isNaN(parseFloat(site.latitude));
+                    const validLng = hasLng && !isNaN(parseFloat(site.longitude));
+                    return validLat && validLng;
+                });
+                
+                console.log(`Loaded ${allSites.length} sites with valid coordinates`);
                 updateMap();
+            },
+            error: function(error) {
+                console.error('Error loading CSV:', error);
             }
         });
+        
+        function parseTimeString(timeStr) {
+            // Handle various time formats: "9:00 AM", "09:00", "9:00", etc.
+            if (!timeStr || timeStr.trim() === '') return null;
+            
+            timeStr = timeStr.trim();
+            
+            // Check for AM/PM format
+            const ampmMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+            if (ampmMatch) {
+                let hour = parseInt(ampmMatch[1]);
+                const min = parseInt(ampmMatch[2]);
+                const period = ampmMatch[3].toUpperCase();
+                
+                if (period === 'PM' && hour !== 12) hour += 12;
+                if (period === 'AM' && hour === 12) hour = 0;
+                
+                return hour * 60 + min;
+            }
+            
+            // Check for 24-hour format
+            const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/);
+            if (timeMatch) {
+                const hour = parseInt(timeMatch[1]);
+                const min = parseInt(timeMatch[2]);
+                return hour * 60 + min;
+            }
+            
+            return null;
+        }
         
         function isOpenNow(site) {
             const now = new Date();
@@ -182,19 +204,18 @@
                 return false; // Closed today
             }
             
-            // Parse hours (format: "HH:MM - HH:MM")
-            const timeMatch = todayHours.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
-            if (!timeMatch) {
+            // Parse hours (format: "HH:MM AM/PM - HH:MM AM/PM" or "HH:MM - HH:MM")
+            const parts = todayHours.split('-');
+            if (parts.length !== 2) {
                 return false; // Can't parse hours
             }
             
-            const openHour = parseInt(timeMatch[1]);
-            const openMin = parseInt(timeMatch[2]);
-            const closeHour = parseInt(timeMatch[3]);
-            const closeMin = parseInt(timeMatch[4]);
+            const openTime = parseTimeString(parts[0]);
+            const closeTime = parseTimeString(parts[1]);
             
-            const openTime = openHour * 60 + openMin;
-            const closeTime = closeHour * 60 + closeMin;
+            if (openTime === null || closeTime === null) {
+                return false; // Can't parse times
+            }
             
             // Handle times that cross midnight
             if (closeTime < openTime) {
@@ -211,37 +232,21 @@
             const showOpen = document.getElementById('filter-open').checked;
             const showClosed = document.getElementById('filter-closed').checked;
             
-            const activeServices = {
-                charging: document.getElementById('filter-charging').checked,
-                pet: document.getElementById('filter-pet').checked,
-                showers: document.getElementById('filter-showers').checked,
-                food: document.getElementById('filter-food').checked
-            };
-            
-            // Filter sites
+            // Filter sites based on status
             const filteredSites = allSites.filter(site => {
                 const isOpen = isOpenNow(site);
                 
-                // Status filter
-                if (!showOpen && isOpen) return false;
-                if (!showClosed && !isOpen) return false;
+                // If both filters are checked, show all sites
+                if (showOpen && showClosed) return true;
                 
-                // Service filter
-                const anyServiceFilterActive = Object.values(activeServices).some(v => v);
-                if (anyServiceFilterActive) {
-                    const services = (site.services_offered || '').toLowerCase();
-                    let hasMatchingService = false;
-                    
-                    if (activeServices.charging && services.includes('charging')) hasMatchingService = true;
-                    if (activeServices.pet && services.includes('pet')) hasMatchingService = true;
-                    if (activeServices.showers && services.includes('shower')) hasMatchingService = true;
-                    if (activeServices.food && services.includes('food')) hasMatchingService = true;
-                    
-                    if (!hasMatchingService) return false;
-                }
+                // If only one filter is checked, show only matching sites
+                if (showOpen && isOpen) return true;
+                if (showClosed && !isOpen) return true;
                 
-                return true;
+                return false;
             });
+            
+            console.log(`Showing ${filteredSites.length} of ${allSites.length} sites`);
             
             // Add markers with custom icons
             filteredSites.forEach(site => {
@@ -252,14 +257,17 @@
                 // Get the appropriate icon for this site type
                 const icon = icons[site.site_type] || icons['Cooling Center'];
                 
-                L.marker([parseFloat(site.latitude), parseFloat(site.longitude)], { icon: icon })
+                const lat = parseFloat(site.latitude);
+                const lng = parseFloat(site.longitude);
+                
+                L.marker([lat, lng], { icon: icon })
                     .bindPopup(`
-                        <b>${site.site_name}</b><br>
+                        <b>${site.site_name || 'Unnamed Site'}</b><br>
                         <span class="${statusClass}">${statusText}</span><br>
-                        ${site.site_type}<br>
-                        ${site.address}, ${site.city}<br>
-                        <b>Hours:</b> ${site.full_schedule}<br>
-                        <b>Services:</b> ${site.services_offered}
+                        ${site.site_type || 'Unknown Type'}<br>
+                        ${site.address || ''}, ${site.city || ''}<br>
+                        <b>Hours:</b> ${site.full_schedule || 'Not available'}<br>
+                        ${site.services_offered ? `<b>Services:</b> ${site.services_offered}` : ''}
                     `)
                     .addTo(markers);
             });
