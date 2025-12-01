@@ -40,6 +40,21 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add data/
-          git diff --quiet || git commit -m "Update data $(date +'%Y-%m-%d %H:%M')"
-          git push
+          
+          # Show what files we have
+          echo "Files in data/:"
+          ls -lah data/public/ || echo "No public folder"
+          ls -lah data/archives/ || echo "No archives folder"
+          
+          # Add all data files
+          git add -A data/
+          
+          # Check if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            echo "Committing changes..."
+            git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')"
+            git push
+            echo "✓ Changes pushed to GitHub"
+          fi
