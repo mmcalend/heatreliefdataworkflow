@@ -1,13 +1,9 @@
-"""
-Heat Relief Network Data Pipeline
-Simple script that does everything in order
-"""
 import requests
 import pandas as pd
 import os
 from datetime import datetime
 
-# ==================== STEP 1: GET DATA FROM REDCAP ====================
+# Import from redcap
 def fetch_from_redcap():
     """Pull all records from REDCap"""
     print("→ Fetching data from REDCap...")
@@ -28,7 +24,7 @@ def fetch_from_redcap():
     return df
 
 
-# ==================== STEP 2: SEPARATE PRESEASON FROM UPDATES ====================
+# Pre-season
 def split_preseason_and_updates(df):
     """Split into base records and in-season updates"""
     print("→ Separating preseason sites from updates...")
@@ -46,7 +42,7 @@ def split_preseason_and_updates(df):
     return preseason, updates
 
 
-# ==================== STEP 3: CLEAN UP THE DATA ====================
+# Clean
 def clean_data(preseason_df):
     """Convert REDCap messy format to clean CSV format"""
     print("→ Cleaning up data...")
@@ -72,7 +68,7 @@ def clean_data(preseason_df):
         clean['zip']
     )
     
-    # Hours - keep it simple, just show what they entered
+    # Hours 
     clean['hours'] = ''
     for idx, row in preseason_df.iterrows():
         if row.get('same_hours_everyday'):
@@ -92,7 +88,7 @@ def clean_data(preseason_df):
             
             clean.at[idx, 'hours'] = '; '.join(hours_list)
     
-    # Services - just list them
+    # Services 
     clean['services'] = ''
     service_fields = [col for col in preseason_df.columns if col.startswith('services___')]
     for idx, row in preseason_df.iterrows():
@@ -114,9 +110,12 @@ def clean_data(preseason_df):
     return clean
 
 
-# ==================== STEP 4: ADD COORDINATES ====================
-def geocode_addresses(df):
-    """Add lat/lon coordinates using Mapbox"""
+# Geocode
+def geocode_addresses(df, previous_csv_path='data/public/sites.csv'):
+    """
+    Add lat/lon coordinates using Mapbox
+    Only geocodes NEWLY ACCEPTED sites to save API credits
+    """
     print("→ Geocoding addresses...")
     
     mapbox_token = os.environ.get('MAPBOX_API_TOKEN')
@@ -124,12 +123,46 @@ def geocode_addresses(df):
         print("  ⚠ No Mapbox token, skipping geocoding")
         return df
     
-    geocoded_count = 0
-    for idx, row in df.iterrows():
-        if pd.notna(row['latitude']):
-            continue  # Already has coordinates
-        
+    
+    previously_geocoded = set()
+    if os.path.exists(previous_csv_path):
         try:
+            prev_df = pd.read_csv(previous_csv_path)
+            # Track which site_ids already have coordinates
+            previously_geocoded = set(
+                prev_df[pd.notna(prev_df['latitude'])]['site_id'].astype(str)
+            )
+            print(f"  Found {len(previously_geocoded)} previously geocoded sites")
+        except:
+            pass  # If can't read previous file, geocode everything accepted
+    
+    geocoded_count = 0
+    skipped_count = 0
+    
+    for idx, row in df.iterrows():
+        site_id = str(row['site_id'])
+        
+        # Only geocode if site is accepted and hasnt been geocoded before
+        if row['status'] != 'Accepted':
+            skipped_count += 1
+            continue
+            
+        if site_id in previously_geocoded:
+            # Already geocoded, copy from previous data
+            if os.path.exists(previous_csv_path):
+                try:
+                    prev_df = pd.read_csv(previous_csv_path)
+                    prev_row = prev_df[prev_df['site_id'].astype(str) == site_id]
+                    if not prev_row.empty:
+                        df.at[idx, 'latitude'] = prev_row.iloc[0]['latitude']
+                        df.at[idx, 'longitude'] = prev_row.iloc[0]['longitude']
+                except:
+                    pass
+            continue
+        
+        # This is a NEWLY ACCEPTED site - geocode it
+        try:
+            print(f"  Geocoding newly accepted site: {row['site_name']}")
             response = requests.get(
                 f"https://api.mapbox.com/geocoding/v5/mapbox.places/{row['full_address']}.json",
                 params={'access_token': mapbox_token, 'limit': 1}
@@ -141,20 +174,20 @@ def geocode_addresses(df):
                 df.at[idx, 'longitude'] = coords[0]
                 df.at[idx, 'latitude'] = coords[1]
                 geocoded_count += 1
-        except:
-            pass  # Skip if geocoding fails
+        except Exception as e:
+            print(f"  Failed to geocode {row['site_name']}: {e}")
     
-    print(f"  Geocoded {geocoded_count} new sites")
+    print(f"  Geocoded {geocoded_count} newly accepted sites")
+    print(f"  Skipped {skipped_count} pending/rejected sites (no coordinates needed)")
     return df
 
 
-# ==================== STEP 5: APPLY IN-SEASON UPDATES ====================
+# In season updates
 def apply_updates(clean_df, updates_df):
-    """Apply in-season updates on top of preseason data"""
-    print("→ Applying in-season updates...")
+
     
     if updates_df.empty:
-        print("  No updates to apply")
+       
         return clean_df
     
     # Get most recent update for each site
@@ -163,7 +196,7 @@ def apply_updates(clean_df, updates_df):
     
     update_count = 0
     for record_id, update in latest_updates.iterrows():
-        # Find the site in our clean data
+        # Find the site in clean data
         mask = clean_df['site_id'] == record_id
         if not mask.any():
             continue
@@ -182,10 +215,9 @@ def apply_updates(clean_df, updates_df):
     return clean_df
 
 
-# ==================== STEP 6: SAVE OUTPUT ====================
+# Output
 def save_files(df):
-    """Save CSV and create archive"""
-    print("→ Saving output files...")
+
     
     # Save main CSV
     os.makedirs('data/public', exist_ok=True)
@@ -209,7 +241,6 @@ Pending: {len(df[df['status'] == 'Pending'])}
         f.write(summary)
 
 
-# ==================== RUN EVERYTHING ====================
 def main():
     """Run the complete pipeline"""
     print("\n" + "="*60)
@@ -234,13 +265,9 @@ def main():
         
         # Step 6: Save
         save_files(final_data)
-        
-        print("\n" + "="*60)
-        print("✓ COMPLETE")
-        print("="*60 + "\n")
+    
         
     except Exception as e:
-        print(f"\n✗ ERROR: {e}")
         raise
 
 
