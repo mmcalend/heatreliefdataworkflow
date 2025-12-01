@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+
+# API keys and secrets (use GitHub Secrets instead)
+.env
+*.key
+*.pem
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Keep data/public for GitHub Pages but ignore sensitive data
+# data/public/ is version controlled for the map
+data/archives/
+*.log
