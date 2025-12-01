@@ -1,10 +1,8 @@
 Heat Relief Network Data
-Updated: 2025-12-01 02:56:23
+Updated: 2025-12-01 03:05:30
 
 Total Sites: 10
 Accepted: 9
 Pending: 0
-Under Review: 1
 
 Geocoded: 9
-Missing Coordinates: 1
