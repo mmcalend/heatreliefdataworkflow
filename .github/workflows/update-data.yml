@@ -4,7 +4,9 @@ on:
   schedule:
     - cron: '0 * * * *'  # Run every hour
   workflow_dispatch:
-
+concurrency:
+  group: data-update
+  cancel-in-progress: false  # Let current run finish, queue the next
 jobs:
   update-data:
     runs-on: ubuntu-latest
