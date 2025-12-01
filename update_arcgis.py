@@ -5,13 +5,20 @@ import json
 import os
 
 def get_token():
-    """Login to ArcGIS Online"""
+    """Login to ArcGIS Organization"""
     print("→ Logging into ArcGIS Online...")
     
+    # For organizational accounts, use your org's portal URL
+    # Format: https://YOURORG.maps.arcgis.com/sharing/rest/generateToken
+    # If you're not sure, it's usually just www.arcgis.com for hosted orgs
+    
+    username = os.environ['ARCGIS_USERNAME']
+    
+    # Try organizational login first
     response = requests.post(
         'https://www.arcgis.com/sharing/rest/generateToken',
         data={
-            'username': os.environ['ARCGIS_USERNAME'],
+            'username': username,
             'password': os.environ['ARCGIS_PASSWORD'],
             'referer': 'https://www.arcgis.com',
             'f': 'json'
@@ -19,11 +26,40 @@ def get_token():
     )
     
     result = response.json()
+    
+    # Check if we got a token
     if 'token' in result:
         print("  ✓ Logged in")
         return result['token']
-    else:
-        raise Exception(f"Login failed: {result}")
+    
+    # If login failed, check if it's because of org account
+    if 'error' in result:
+        error_msg = result['error'].get('message', '')
+        print(f"  ⚠ Login issue: {error_msg}")
+        
+        # If it mentions signing in through organization
+        if 'organization' in error_msg.lower():
+            print("  → Trying organization-specific login...")
+            
+            # You'll need to set ARCGIS_ORG_URL as a secret
+            org_url = os.environ.get('ARCGIS_ORG_URL', 'https://www.arcgis.com')
+            
+            response = requests.post(
+                f'{org_url}/sharing/rest/generateToken',
+                data={
+                    'username': username,
+                    'password': os.environ['ARCGIS_PASSWORD'],
+                    'referer': org_url,
+                    'f': 'json'
+                }
+            )
+            
+            result = response.json()
+            if 'token' in result:
+                print("  ✓ Logged in via organization")
+                return result['token']
+    
+    raise Exception(f"Login failed: {result}")
 
 
 def csv_to_features():
