@@ -1,5 +1,5 @@
 Heat Relief Network Data
-Updated: 2026-01-27 18:35:23
+Updated: 2026-01-27 19:24:51
 
 Total Sites: 11
 Geocoded: 11
